@@ -1,40 +1,37 @@
 pipeline {
-    agent none
+    agent any
     tools{
-        jdk 'myjava'
         maven 'mymaven'
+        jdk 'myjava'
     }
 
     parameters{
-        string(name:'Env',defaultValue:'Test',description:'version to deploy')
-        booleanParam(name:'executeTests',defaultValue: true,description:'decide to run tc')
-        choice(name:'APPVERSION',choices:['1.1','1.2','1.3'])
-    }
-    environment{
-        BUILD_SERVER_IP='ec2-user@172.31.46.168'
-        DEPLOY_SERVER_IP='ec2-user@172.31.46.239'
-        IMAGE_NAME='devopstrainer/java-mvn-privaterepos'
+         string(name: 'ENV', defaultValue: 'DEV', description: 'env to compile')
+         booleanParam(name: 'executeTest', defaultValue: true, description: 'decide to run tc')
+         choice(name: 'APPVERSION', choices: ['1.1', '1.2', '1.3'], description: 'Pick app version')
     }
 
     stages {
         stage('Compile') {
-            agent any
             steps {
-                echo 'Compiling the code'
-                echo "Compiling in ${params.Env}"
+                script{                
+                echo "Compiling in ${params.ENV} environment"
                 sh 'mvn compile'
             }
+            }
+            
         }
-        stage('UnitTest') {
-            agent any
+        stage("UnitTest"){
             when{
                 expression{
-                    params.executeTests == true
+                    params.executeTest == true
                 }
             }
-            steps {
-                echo 'Testing the code'
+            steps{
+                script{
+                echo "Run the Unit test cases"
                 sh 'mvn test'
+            }
             }
             post{
                 always{
@@ -42,54 +39,29 @@ pipeline {
                 }
             }
         }
-        stage('DOCKER_BUILD') {
-            //  agent {
-            //     // Specify the label or name of the Jenkins agent (slave node) where you want to run the package stage
-            //     label 'linux_slave'
-            // }
-
-            agent any       
-           
-            steps{
-            script{
-                sshagent(['build-server']) {
-                    withCredentials([usernamePassword(credentialsId: 'docker-hub', passwordVariable: 'PASSWORD', usernameVariable: 'USERNAME')]) {
-                    echo "Packaging the code"
-                    sh "scp -o StrictHostKeyChecking=no server-config.sh  ${BUILD_SERVER_IP}:/home/ec2-user"
-                    sh "ssh -o StrictHostKeyChecking=no ${BUILD_SERVER_IP} 'bash ~/server-config.sh ${IMAGE_NAME} ${BUILD_NUMBER}'"  
-                    sh "ssh ${BUILD_SERVER_IP} sudo docker login -u ${USERNAME} -p ${PASSWORD}"
-                    sh "ssh ${BUILD_SERVER_IP} sudo docker push ${IMAGE_NAME}:${BUILD_NUMBER}"
-                                   
-                    
-                }
-            }
-            }
-        }
-        }
-        stage('DEPLOY ON TEST SERVER'){
-            agent any
-             input{
-                message "SELECT THE ENVIRONMENT TO DEPLOY"
-                ok "DEPLOY"
-                parameters{
-                    choice(name:'NEWAPP',choices:['ONPREM','EKS','EC2'])
-
-            }
-             }
+        stage("Package"){
             steps{
                 script{
-                sshagent(['build-server']) {
-                withCredentials([usernamePassword(credentialsId: 'docker-hub', passwordVariable: 'PASSWORD', usernameVariable: 'USERNAME')]) {
-                sh "ssh  -o StrictHostKeyChecking=no ${DEPLOY_SERVER_IP} sudo yum install docker -y"
-                sh "ssh  ${DEPLOY_SERVER_IP} sudo systemctl start docker"
-                sh "ssh  ${DEPLOY_SERVER_IP} sudo docker login -u ${USERNAME} -p ${PASSWORD}"
-                sh "ssh  ${DEPLOY_SERVER_IP} sudo docker run -itd -P ${IMAGE_NAME}:${BUILD_NUMBER}"
+                echo "Packing the app version ${params.APPVERSION}"
+                sh 'mvn package'
+                }
+            }
+        }
+        stage("Deploy"){
+            input{
+                message "Select the version to deploy"
+                ok "Version selected"
+                parameters{
+                    choice(name: 'NEWAPP',choices:['EKS','ONPrem','Ec2'])
+                }
+            }
+            steps{
+                script{
+                echo "Deploy the app to ${NEWAPP}"
 
                 }
             }
 
         }
-    }
-}
     }
 }
